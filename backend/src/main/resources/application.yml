@@ -1,0 +1,20 @@
+spring:
+  profiles:
+    active: dev
+
+server:
+  port: 8080
+
+jwt:
+  secret: ${JWT_SECRET:404a6b6d6f6e674c6f6e674b657942617365363452616e646f6d536563726574}
+  expiration-ms: 86400000
+
+groq:
+  api-key: ${GROQ_API_KEY:}
+
+itunes:
+  search-url: https://itunes.apple.com/search
+
+logging:
+  level:
+    com.musiccatalog: DEBUG

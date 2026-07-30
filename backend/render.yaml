@@ -1,0 +1,38 @@
+services:
+  - name: music-catalog-backend
+    env: java
+    build:
+      command: ./mvnw clean package -DskipTests
+    version: "21"
+    region: singapore-1
+    plan: free
+    diskSizeMB: 512
+    healthCheck:
+      path: /
+      port: 8080
+      interval: 10
+    envVars:
+      name: DB_URL
+      value: ${postgresql://postgres:${PGPASSWORD}@db.music-catalog.internal:5432/music_catalog}
+      name: DB_USER
+      value: postgres
+      name: DB_PASSWORD
+      value: ${PGPASSWORD}
+      name: JWT_SECRET
+      value: ${JWT_SECRET}
+      name: GROQ_API_KEY
+      value: ${GROQ_API_KEY}
+    instanceType: basic-s
+
+services:
+  - name: music-catalog-db
+    image: postgres:16-alpine
+    env:
+      POSTGRES_DB: music_catalog
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PGPASSWORD}
+    volumes:
+      - music_catalog_data:/var/lib/postgresql/data
+
+volumes:
+  music_catalog_data:
