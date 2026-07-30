@@ -6,7 +6,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
-import java.util.Base64;
 import java.util.Date;
 
 @Component
@@ -18,10 +17,7 @@ public class JwtUtil {
     public JwtUtil(
             @Value("${jwt.secret}") String secret,
             @Value("${jwt.expiration-ms}") long expirationMs) {
-        byte[] keyBytes = secret.length() >= 32
-                ? secret.getBytes()
-                : Base64.getDecoder().decode(secret);
-        this.secretKey = Keys.hmacShaKeyFor(keyBytes);
+        this.secretKey = Keys.hmacShaKeyFor(secret.strip().getBytes());
         this.expirationMs = expirationMs;
     }
 
