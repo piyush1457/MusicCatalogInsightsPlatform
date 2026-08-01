@@ -12,7 +12,7 @@ A full-stack application for discovering, cataloging, and analyzing music from t
 | **Auth** | JWT (jjwt 0.12.5), BCrypt |
 | **Migrations** | Flyway |
 | **Cache** | Caffeine |
-| **APIs** | iTunes Search API, Groq AI (llama-3.3-70b) |
+| **APIs** | iTunes Search API, Groq AI (llama-3.3-70b-versatile) |
 | **Infra** | Docker Compose, Render |
 
 ## Architecture
@@ -206,3 +206,70 @@ Flyway manages schema changes. Migrations are in `backend/src/main/resources/db/
 - `V2__create_library_items_table.sql`
 
 Run automatically when `spring.flyway.enabled=true` (postgres profile).
+
+## Database Schema
+
+Flyway migrations define two tables (`backend/src/main/resources/db/migration/`).
+
+### `users`
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| `id` | `BIGSERIAL` | Primary Key |
+| `email` | `VARCHAR(255)` | NOT NULL, UNIQUE |
+| `password_hash` | `VARCHAR(255)` | NOT NULL (BCrypt) |
+| `created_at` | `TIMESTAMPTZ` | NOT NULL, DEFAULT `NOW()` |
+
+### `library_items`
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| `id` | `BIGSERIAL` | Primary Key |
+| `user_id` | `BIGINT` | NOT NULL, FK → `users(id)` ON DELETE CASCADE |
+| `apple_catalog_id` | `BIGINT` | NOT NULL (iTunes track ID) |
+| `title` | `VARCHAR(255)` | NOT NULL |
+| `artist_name` | `VARCHAR(255)` | NOT NULL |
+| `genre` | `VARCHAR(255)` | Nullable |
+| `release_date` | `VARCHAR(50)` | Nullable (ISO date string) |
+| `duration_seconds` | `INTEGER` | Nullable |
+| `artwork_url` | `VARCHAR(500)` | Nullable |
+| `user_rating` | `INTEGER` | CHECK 1–5, Nullable |
+| `user_notes` | `TEXT` | Nullable |
+| `created_at` | `TIMESTAMPTZ` | NOT NULL, DEFAULT `NOW()` |
+| `updated_at` | `TIMESTAMPTZ` | NOT NULL, DEFAULT `NOW()` |
+
+Index: `idx_library_items_user_id ON library_items(user_id)`.
+
+**Relationships:** One user has many library items (`1:N`). Deleting a user cascades to their items. The library item denormalizes iTunes metadata (title, artist, genre, release date, duration, artwork URL) so the app works offline and analytics queries are fast, at the cost of snapshot staleness vs. the live catalog.
+
+## AI Feature
+
+The Dashboard collects analytics (genre distribution, releases by year, top artists, duration histogram) and posts them to `POST /api/insights/summary`. The backend then calls the **Groq API** (`llama-3.3-70b-versatile`) with:
+
+```
+system: You are a helpful music analyst.
+user: Analyze this music library analytics JSON and write a 3-5 sentence
+      natural-language paragraph summarizing key trends. Mention dominant
+      genres, decade/era leanings, average track length, and notable top
+      artists. Keep it concise and conversational. JSON: <analytics summary>
+```
+
+Flow:
+
+1. Frontend fetches `GET /api/analytics/summary` (cached with Caffeine per user).
+2. Frontend sends that JSON to `POST /api/insights/summary` (JWT-protected).
+3. Backend validates the Groq API key, builds the request, and calls
+   `https://api.groq.com/openai/v1/chat/completions` via a reactive WebClient with a **30s timeout**.
+4. The returned paragraph is rendered on the Dashboard alongside the charts.
+
+Graceful degradation: if the key is unset, the call times out, or Groq errors, the API returns a friendly message instead of failing — AI is a progressive enhancement, not a hard dependency.
+
+## Trade-offs & Design Decisions
+
+- **Denormalized catalog snapshots** — iTunes metadata is copied into `library_items` so the library is queryable and analytics are fast, but saved items may go stale if the catalog changes. A live-fetch hybrid would add latency and coupling to the iTunes API.
+- **H2 in dev vs. PostgreSQL in prod** — H2 gives zero-setup local dev; PostgreSQL provides production-grade persistence, indexing, and concurrency. The trade-off is two JDBC dialects to keep consistent and minor behavioral differences between environments.
+- **Caffeine in-memory cache** — Fast, dependency-free, and avoids a Redis service for a low-write workload, but is per-instance (no sharing across replicas) and evicts on restart.
+- **JWT over session auth** — Stateless, scales horizontally, and works well for a SPA, but tokens can't be revoked server-side (mitigated by a short-ish expiry and BCrypt-hashed passwords at rest).
+- **Groq cloud model (llama-3.3-70b) instead of self-hosted** — Zero GPU/infra cost and fast inference, but introduces a third-party dependency and rate-limit/availability risk. All failures degrade gracefully.
+- **Monolithic full-stack repo** — One repo for frontend + backend simplifies CI/CD and the Render blueprint, at the cost of coupled deploys. A monorepo split would allow independent versioning.
+- **Flyway for migrations** — Versioned, deterministic schema evolution, but requires discipline to never edit an applied migration.
